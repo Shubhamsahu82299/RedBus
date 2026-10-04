@@ -20,16 +20,47 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSingleton<TicketPdfService>();
 
 // 3. MassTransit Publisher Configuration
-var rabbitMqUrl = builder.Configuration["RABBITMQ_URL"] 
+// MassTransit Broker Configuration (CloudAMQP TLS & Custom VHost Compatible)
+var rabbitMqUrl = Environment.GetEnvironmentVariable("RABBITMQ_URL") 
+    ?? builder.Configuration["RABBITMQ_URL"] 
     ?? "amqps://nznmdgce:IWQkbR3LSELVQWQhGP9u7I0vZi221da0@warthog.lmq.cloudamqp.com/nznmdgce";
 
 builder.Services.AddMassTransit(x =>
 {
     x.UsingRabbitMq((context, cfg) =>
     {
-        cfg.Host(new Uri(rabbitMqUrl));
+        var uri = new Uri(rabbitMqUrl);
+        var userInfo = uri.UserInfo.Split(':');
+        var username = userInfo.Length > 0 ? userInfo[0] : "guest";
+        var password = userInfo.Length > 1 ? userInfo[1] : "guest";
+        var vhost = uri.AbsolutePath.TrimStart('/');
+        if (string.IsNullOrEmpty(vhost)) vhost = "/";
+
+        cfg.Host(uri.Host, (ushort)(uri.Port > 0 ? uri.Port : 5671), vhost, h =>
+        {
+            h.Username(username);
+            h.Password(password);
+            if (uri.Scheme == "amqps" || uri.Scheme == "rabbitmqs")
+            {
+                h.UseSsl(s =>
+                {
+                    s.Protocol = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13;
+                });
+            }
+        });
+
+        cfg.UseMessageRetry(r => r.Interval(3, TimeSpan.FromSeconds(5)));
     });
 });
+
+// Render startup timeout se bachane ke liye non-blocking start
+builder.Services.AddOptions<MassTransitHostOptions>()
+    .Configure(options =>
+    {
+        options.WaitUntilStarted = false;
+        options.StartTimeout = TimeSpan.FromSeconds(30);
+        options.StopTimeout = TimeSpan.FromSeconds(30);
+    });
 /* builder.Services.AddMassTransit(x =>
 {
     x.UsingRabbitMq((context, cfg) =>
