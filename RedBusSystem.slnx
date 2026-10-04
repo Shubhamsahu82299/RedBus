@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="RedBus.Api/RedBus.Api.csproj" />
+  <Project Path="RedBus.Shared/RedBus.Shared.csproj" />
+  <Project Path="RedBus.Worker/RedBus.Worker.csproj" />
+</Solution>
