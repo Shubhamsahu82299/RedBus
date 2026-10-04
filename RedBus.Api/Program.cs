@@ -363,7 +363,55 @@ app.MapGet("/api/tickets/{bookingId}/download", async (
 // ==========================================
 // ADMIN DASHBOARD REST APIS
 // ==========================================
+// 1. Bus Search Endpoint (/api/buses)
+app.MapGet("/api/buses", async (string? from, string? to, AppDbContext db) =>
+{
+    var query = db.Schedules
+        .Include(s => s.Bus)
+        .Include(s => s.Route)
+        .Include(s => s.Reservations)
+        .AsQueryable();
 
+    if (!string.IsNullOrWhiteSpace(from))
+    {
+        var src = from.Trim().ToLower();
+        query = query.Where(s => s.Route != null && s.Route.SourceCity.ToLower() == src);
+    }
+
+    if (!string.IsNullOrWhiteSpace(to))
+    {
+        var dest = to.Trim().ToLower();
+        query = query.Where(s => s.Route != null && s.Route.DestinationCity.ToLower() == dest);
+    }
+
+    var results = await query.ToListAsync();
+    return Results.Ok(results);
+});
+
+// 2. Fallback Endpoint (/buses)
+app.MapGet("/buses", async (string? from, string? to, AppDbContext db) =>
+{
+    var query = db.Schedules
+        .Include(s => s.Bus)
+        .Include(s => s.Route)
+        .Include(s => s.Reservations)
+        .AsQueryable();
+
+    if (!string.IsNullOrWhiteSpace(from))
+    {
+        var src = from.Trim().ToLower();
+        query = query.Where(s => s.Route != null && s.Route.SourceCity.ToLower() == src);
+    }
+
+    if (!string.IsNullOrWhiteSpace(to))
+    {
+        var dest = to.Trim().ToLower();
+        query = query.Where(s => s.Route != null && s.Route.DestinationCity.ToLower() == dest);
+    }
+
+    var results = await query.ToListAsync();
+    return Results.Ok(results);
+});
 // 1. GET ALL BOOKINGS (Admin Live Monitoring)
 app.MapGet("/api/admin/bookings", async (AppDbContext db) =>
 {
