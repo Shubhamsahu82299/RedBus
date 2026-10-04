@@ -5,16 +5,20 @@ using RedBus.Worker.Consumers;
 using RedBus.Worker.Services;
 using RedBus.Shared.Services;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
+
+// Render ke liye port configuration
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // 1. Database Context
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=../redbus.db"));
+    options.UseSqlite("Data Source=redbus.db"));
 
 // 2. Register PDF Service
 builder.Services.AddSingleton<TicketPdfService>();
 
-// 3. MassTransit Broker Configuration (CloudAMQP TLS & Custom VHost Compatible)
+// 3. MassTransit Broker Configuration
 var rabbitMqUrl = Environment.GetEnvironmentVariable("RABBITMQ_URL") 
     ?? builder.Configuration["RABBITMQ_URL"] 
     ?? "amqps://nznmdgce:IWQkbR3LSELVQWQhGP9u7I0vZi221da0@warthog.lmq.cloudamqp.com/nznmdgce";
@@ -60,7 +64,6 @@ builder.Services.AddMassTransit(x =>
     });
 });
 
-// Render startup timeout se bachane ke liye non-blocking start
 builder.Services.AddOptions<MassTransitHostOptions>()
     .Configure(options =>
     {
@@ -71,5 +74,17 @@ builder.Services.AddOptions<MassTransitHostOptions>()
 
 builder.Services.AddHostedService<ExpiredHoldCleanupWorker>();
 
-var host = builder.Build();
-host.Run();
+var app = builder.Build();
+
+// Ensure Database & Tables exist
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.EnsureCreated();
+}
+
+// Render Health check endpoint
+app.MapGet("/", () => "RedBus Worker is running!");
+app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+
+app.Run();
