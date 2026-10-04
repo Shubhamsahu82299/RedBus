@@ -591,55 +591,50 @@ app.MapPost("/api/bookings/{bookingId}/cancel", async (string bookingId, AppDbCo
 });
 // SEARCH BUSES BY ROUTE (LIVE FROM DB)
 // SEARCH BUSES BY ROUTE (LIVE FROM SQLITE)
-// Exact route jo frontend call kar raha hai
 app.MapGet("/api/schedules/search", async (string? from, string? to, AppDbContext db) =>
 {
     var query = db.Schedules
         .Include(s => s.Bus)
         .Include(s => s.Route)
-        .Include(s => s.Reservations)
         .AsQueryable();
 
     if (!string.IsNullOrWhiteSpace(from))
-    {
-        var src = from.Trim().ToLower();
-        query = query.Where(s => s.Route != null && s.Route.SourceCity.ToLower() == src);
-    }
+        query = query.Where(s => s.Route!.SourceCity.ToLower() == from.Trim().ToLower());
 
     if (!string.IsNullOrWhiteSpace(to))
-    {
-        var dest = to.Trim().ToLower();
-        query = query.Where(s => s.Route != null && s.Route.DestinationCity.ToLower() == dest);
-    }
+        query = query.Where(s => s.Route!.DestinationCity.ToLower() == to.Trim().ToLower());
 
-    var results = await query.ToListAsync();
-    return Results.Ok(results);
+    var list = await query.ToListAsync();
+
+   var result = list.Select(s => new
+    {
+        scheduleId = s.Id,
+        @operator = s.Bus != null ? s.Bus.OperatorName : "Super Express",
+        busType = s.Bus != null ? s.Bus.BusType : "A/C Sleeper (2+1)",
+        busNumber = s.Bus != null ? s.Bus.RegistrationNumber : "CG-04-X-2026",
+        layout = (s.Bus != null && s.Bus.BusType.Contains("Sleeper")) ? "SLEEPER" : "SEATER",
+        rating = s.Bus != null ? s.Bus.Rating : 4.8,
+        reviews = 1240,
+        from = s.Route != null ? s.Route.SourceCity : (from ?? "Raipur"),
+        to = s.Route != null ? s.Route.DestinationCity : (to ?? "Durg"),
+        dep = s.DepartureTime.ToString("HH:mm"),
+        arr = s.ArrivalTime.ToString("HH:mm"),
+        duration = $"{(int)(s.ArrivalTime - s.DepartureTime).TotalHours}h {(s.ArrivalTime - s.DepartureTime).Minutes}m",
+        @base = (int)s.BaseFare,
+        ac = true,
+        primo = s.Bus != null && s.Bus.Rating >= 4.8,
+        amenities = new[] { "Wi-Fi", "Charging Port", "Water Bottle", "Emergency SOS" },
+        bps = new[] {
+            new { id = $"bp_{s.Id}_1", name = $"{(s.Route != null ? s.Route.SourceCity : "City")} Central Stand", landmark = "Platform 1", time = s.DepartureTime.ToString("HH:mm") }
+        },
+        dps = new[] {
+            new { id = $"dp_{s.Id}_1", name = $"{(s.Route != null ? s.Route.DestinationCity : "City")} Bypass Terminal", landmark = "Main Highway", time = s.ArrivalTime.ToString("HH:mm") }
+        }
+    });
+
+    return Results.Ok(result);
 });
 
-// Double slash safe fallback route
-app.MapGet("//api/schedules/search", async (string? from, string? to, AppDbContext db) =>
-{
-    var query = db.Schedules
-        .Include(s => s.Bus)
-        .Include(s => s.Route)
-        .Include(s => s.Reservations)
-        .AsQueryable();
-
-    if (!string.IsNullOrWhiteSpace(from))
-    {
-        var src = from.Trim().ToLower();
-        query = query.Where(s => s.Route != null && s.Route.SourceCity.ToLower() == src);
-    }
-
-    if (!string.IsNullOrWhiteSpace(to))
-    {
-        var dest = to.Trim().ToLower();
-        query = query.Where(s => s.Route != null && s.Route.DestinationCity.ToLower() == dest);
-    }
-
-    var results = await query.ToListAsync();
-    return Results.Ok(results);
-});
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
