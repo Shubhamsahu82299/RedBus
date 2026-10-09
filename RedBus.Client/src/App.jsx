@@ -12,6 +12,15 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:5279";
 const MAX_SEATS = 6;
 const RED = "#D84E55";
 
+// Aaj ki dynamic local date (YYYY-MM-DD)
+const getTodayDate = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const playSound = (type) => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -57,12 +66,13 @@ const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 
 export default function App() {
   const [viewMode, setViewMode] = useState("customer");
   
-  // Search state
+  // Search state - Auto current date
   const [source, setSource] = useState("Raipur");
-  const [destination, setDestination] = useState("Pune");
-  const [date, setDate] = useState("2026-10-04");
+  const [destination, setDestination] = useState("Nagpur");
+  const [date, setDate] = useState(getTodayDate);
   const [searching, setSearching] = useState(false);
   const [busesList, setBusesList] = useState([]);
+  const [availableRoutes, setAvailableRoutes] = useState([]);
 
   // Filters & sorting
   const [filters, setFilters] = useState({ ac: false, sleeper: false, seater: false, primo: false });
@@ -91,6 +101,64 @@ export default function App() {
   const [paid, setPaid] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+
+  // 1. Fetch all DB active routes on load
+  useEffect(() => {
+    async function loadRoutes() {
+      try {
+        const r = await fetch(`${API}/api/schedules/search`);
+        if (r.ok) {
+          const data = await r.json();
+          const routeMap = [];
+          data.forEach(item => {
+            if (item.from && item.to) {
+              routeMap.push({ from: item.from, to: item.to });
+            }
+          });
+          if (routeMap.length > 0) {
+            setAvailableRoutes(routeMap);
+          }
+        }
+      } catch {}
+    }
+    loadRoutes();
+  }, []);
+
+  // 2. Geolocation based origin detection
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          try {
+            const { latitude, longitude } = position.coords;
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+            );
+            const geo = await res.json();
+            const detectedCity = geo.address?.city || geo.address?.state_district || geo.address?.town;
+            if (detectedCity) {
+              setSource(detectedCity);
+            }
+          } catch {}
+        },
+        () => {},
+        { timeout: 8000 }
+      );
+    }
+  }, []);
+
+  // 3. Whenever 'source' changes, dynamically adjust 'destination' to match routes in DB
+  useEffect(() => {
+    if (availableRoutes.length > 0) {
+      const matchingTo = availableRoutes
+        .filter(r => r.from.toLowerCase() === source.trim().toLowerCase())
+        .map(r => r.to);
+
+      if (matchingTo.length > 0 && !matchingTo.includes(destination)) {
+        setDestination(matchingTo[0]);
+      }
+    }
+  }, [source, availableRoutes]);
 
   // Live Database Search
   const handleSearch = useCallback(async () => {
@@ -265,31 +333,31 @@ export default function App() {
       {/* NAVBAR */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs backdrop-blur-md bg-white/95">
         <div className="max-w-6xl mx-auto px-4 h-15 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setViewMode("customer")}>
-              <span className="h-9 w-9 rounded-xl text-white flex items-center justify-center font-black text-lg shadow-sm" style={{ background: RED }}>r</span>
-              <div className="flex flex-col">
-                <span className="text-xl font-black tracking-tight leading-none" style={{ color: RED }}>redBus</span>
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-0.5">Enterprise Pulse</span>
-              </div>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setViewMode("customer")}>
+            <span className="h-9 w-9 rounded-xl text-white flex items-center justify-center font-black text-lg shadow-sm" style={{ background: RED }}>r</span>
+            <div className="flex flex-col">
+              <span className="text-xl font-black tracking-tight leading-none" style={{ color: RED }}>redBus</span>
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-0.5">Enterprise Pulse</span>
             </div>
-
-            <nav className="hidden sm:flex text-sm font-bold gap-6">
-              <button onClick={() => setViewMode("customer")} className={`transition flex items-center gap-1.5 cursor-pointer ${viewMode === "customer" ? "text-[#D84E55]" : "text-slate-600 hover:text-black"}`}>
-                <BusIcon className="w-4 h-4" /> Bus Tickets
-              </button>
-              <button onClick={() => setViewMode("admin")} className={`transition flex items-center gap-1.5 cursor-pointer ${viewMode === "admin" ? "text-[#D84E55]" : "text-slate-600 hover:text-black"}`}>
-                <Settings className="w-4 h-4" /> Admin Console
-              </button>
-            </nav>
           </div>
 
+          {/* SINGLE DEDICATED TOGGLE BUTTON */}
           <div className="flex items-center gap-3">
             <button 
               onClick={() => setViewMode(viewMode === "customer" ? "admin" : "customer")} 
-              className="text-xs font-bold px-3.5 py-1.5 rounded-lg border border-slate-300 hover:border-slate-400 bg-white transition shadow-xs cursor-pointer"
+              className="flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border border-slate-300 hover:border-slate-400 bg-white transition shadow-xs cursor-pointer active:scale-95"
             >
-              {viewMode === "admin" ? "Customer Portal" : "Admin Operations"}
+              {viewMode === "admin" ? (
+                <>
+                  <BusIcon className="w-4 h-4 text-[#D84E55]" />
+                  <span>Customer Portal</span>
+                </>
+              ) : (
+                <>
+                  <Settings className="w-4 h-4 text-slate-600" />
+                  <span>Admin Operations</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -305,6 +373,7 @@ export default function App() {
             setDestination={setDestination}
             date={date}
             setDate={setDate}
+            availableRoutes={availableRoutes}
             onSearch={handleSearch}
             searching={searching}
             primaryColor={RED}
