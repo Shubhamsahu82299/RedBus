@@ -12,9 +12,19 @@ using RouteEntity = RedBus.Shared.Entities.Route;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Shared SQLite Context
+// 1. Shared SQLite Context to postgresql
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+                       ?? Environment.GetEnvironmentVariable("POSTGRES_URL");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=../redbus.db"));
+{
+    if (!string.IsNullOrEmpty(connectionString))
+    {
+        options.UseNpgsql(connectionString);
+    }
+});
+/* builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlite("Data Source=../redbus.db")); */
 
 // 2. Register PDF Service inside API for instant on-demand fallback (BEFORE builder.Build())
 builder.Services.AddSingleton<TicketPdfService>();

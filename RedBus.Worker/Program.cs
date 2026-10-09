@@ -12,9 +12,19 @@ var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // 1. Database Context
-builder.Services.AddDbContext<AppDbContext>(options =>
+/* builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite("Data Source=redbus.db"));
+ */
+ var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+                       ?? Environment.GetEnvironmentVariable("POSTGRES_URL");
 
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    if (!string.IsNullOrEmpty(connectionString))
+    {
+        options.UseNpgsql(connectionString);
+    }
+});
 // 2. Register PDF Service
 builder.Services.AddSingleton<TicketPdfService>();
 
@@ -77,12 +87,24 @@ builder.Services.AddHostedService<ExpiredHoldCleanupWorker>();
 var app = builder.Build();
 
 // Ensure Database & Tables exist
-using (var scope = app.Services.CreateScope())
+/* using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
+} */
+// Ensure Database & Tables exist safely in Worker
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.EnsureCreated();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Worker DB initialization notice: {ex.Message}");
+    }
 }
-
 // Render Health check endpoint
 app.MapGet("/", () => "RedBus Worker is running!");
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
