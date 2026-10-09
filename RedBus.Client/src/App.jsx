@@ -89,6 +89,7 @@ export default function App() {
   const [insurance, setInsurance] = useState(true);
   const [coupon] = useState("SAVER120");
   
+  // Contact details
   const [p, setP] = useState({
     name: "Shubham Kumar Sahu",
     email: "shubham@example.com",
@@ -96,11 +97,43 @@ export default function App() {
     gender: "Male"
   });
 
+  // Multiple Passengers state per selected seat
+  const [passengers, setPassengers] = useState([]);
+
   const [booking, setBooking] = useState(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [paid, setPaid] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+
+  // Keep passengers array in sync with selected seats
+  useEffect(() => {
+    setPassengers((prev) => {
+      return selected.map((seatId, idx) => {
+        const existing = prev.find((item) => item.seatId === seatId);
+        const seatObj = seats.find((s) => s.seatId === seatId);
+        const seatNum = seatObj ? seatObj.seatNumber : `Seat ${idx + 1}`;
+
+        return (
+          existing || {
+            seatId,
+            seatNumber: seatNum,
+            name: idx === 0 ? p.name : "",
+            gender: "Male",
+            age: 24,
+          }
+        );
+      });
+    });
+  }, [selected, seats]);
+
+  const handlePassengerChange = (index, field, value) => {
+    setPassengers((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+  };
 
   // 1. Fetch all DB active routes on load
   useEffect(() => {
@@ -198,6 +231,7 @@ export default function App() {
 
   const resetSelection = () => { 
     setSelected([]); 
+    setPassengers([]);
     setStep(1); 
     setBooking(null); 
     setPaid(false); 
@@ -256,6 +290,10 @@ export default function App() {
     const selectedBpObj = activeBus.bps?.find(x => x.id === bp) || activeBus.bps?.[0] || { name: `${activeBus.from} Stand`, landmark: "Main Gate", time: activeBus.dep };
     const selectedDpObj = activeBus.dps?.find(x => x.id === dp) || activeBus.dps?.[0] || { name: `${activeBus.to} Stand`, landmark: "Terminal", time: activeBus.arr };
 
+    const seatNumbersStr = passengers.map(ps => ps.seatNumber).join(", ");
+    const primaryPassengerName = passengers[0]?.name || p.name;
+    const primaryPassengerGender = passengers[0]?.gender || p.gender;
+
     try {
       const r = await fetch(`${API}/api/bookings/hold`, {
         method: "POST", 
@@ -264,10 +302,12 @@ export default function App() {
           scheduleId: activeBus.scheduleId, 
           userId: 1, 
           seatIds: selected, 
-          passengerName: p.name,
+          passengerName: primaryPassengerName,
           passengerEmail: p.email, 
           passengerPhone: p.phone, 
-          passengerGender: p.gender,
+          passengerGender: primaryPassengerGender,
+          seatNumbers: seatNumbersStr,
+          passengers: passengers,
           boardingPointName: selectedBpObj.name,
           boardingLandmark: selectedBpObj.landmark || "Platform 1",
           boardingTime: selectedBpObj.time || activeBus.dep,
@@ -296,6 +336,7 @@ export default function App() {
       if (left === 0) { 
         setBooking(null);
         setSelected([]);
+        setPassengers([]);
         setStep(1);
         setToast("Hold expired."); 
       }
@@ -325,7 +366,9 @@ export default function App() {
     } finally { setBusy(false); }
   };
 
-  const validPassenger = p.name.trim().length > 1 && /^[6-9]\d{9}$/.test(p.phone) && /\S+@\S+\.\S+/.test(p.email);
+  // Validation: Phone, Email aur Har Passenger ka Name check
+  const allPassengersValid = passengers.length > 0 && passengers.every((pas) => pas.name.trim().length > 1);
+  const validPassenger = allPassengersValid && /^[6-9]\d{9}$/.test(p.phone) && /\S+@\S+\.\S+/.test(p.email);
 
   return (
     <div className="min-h-screen bg-[#F4F5F7] text-slate-900 font-sans antialiased selection:bg-[#D84E55] selection:text-white">
@@ -496,6 +539,8 @@ export default function App() {
                           setDp={setDp}
                           p={p}
                           setP={setP}
+                          passengers={passengers}
+                          onPassengerChange={handlePassengerChange}
                           validPassenger={validPassenger}
                           busy={busy}
                           onHoldSeats={holdSeats}

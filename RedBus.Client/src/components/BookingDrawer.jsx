@@ -1,5 +1,5 @@
 import React from "react";
-import { Timer, Download, CheckCircle2, ShieldCheck, X } from "lucide-react";
+import { Timer, Download, CheckCircle2, ShieldCheck, X, User } from "lucide-react";
 
 export default function BookingDrawer({
   bus,
@@ -20,6 +20,8 @@ export default function BookingDrawer({
   setDp,
   p,
   setP,
+  passengers = [],
+  onPassengerChange,
   validPassenger,
   busy,
   onHoldSeats,
@@ -106,7 +108,7 @@ export default function BookingDrawer({
               onChange={(e) => setBp(e.target.value)} 
               className="w-full border border-slate-300 rounded-xl px-3 py-2.5 mt-1 text-xs font-semibold bg-white outline-none"
             >
-              {bus.bps.map((x) => (
+              {(bus.bps || []).map((x) => (
                 <option key={x.id} value={x.id}>{x.time} • {x.name} ({x.landmark || "Point"})</option>
               ))}
             </select>
@@ -119,7 +121,7 @@ export default function BookingDrawer({
               onChange={(e) => setDp(e.target.value)} 
               className="w-full border border-slate-300 rounded-xl px-3 py-2.5 mt-1 text-xs font-semibold bg-white outline-none"
             >
-              {bus.dps.map((x) => (
+              {(bus.dps || []).map((x) => (
                 <option key={x.id} value={x.id}>{x.time} • {x.name}</option>
               ))}
             </select>
@@ -151,47 +153,104 @@ export default function BookingDrawer({
 
       {/* STEP 3 */}
       {step === 3 && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {!booking && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                {["Male", "Female"].map((g) => (
-                  <button 
-                    key={g} 
-                    type="button"
-                    onClick={() => setP({ ...p, gender: g })} 
-                    className={`py-2 rounded-xl border text-xs font-black transition cursor-pointer ${
-                      p.gender === g ? "text-white border-transparent" : "border-slate-300 text-slate-700"
-                    }`} 
-                    style={p.gender === g ? { background: primaryColor } : {}}
-                  >
-                    {g}
-                  </button>
-                ))}
+            <div className="space-y-4">
+              
+              {/* CONTACT DETAILS HEADER */}
+              <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Contact Details (Ticket Delivery)</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input 
+                    placeholder="Email Address" 
+                    value={p.email} 
+                    onChange={(e) => setP({ ...p, email: e.target.value })} 
+                    className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white focus:border-[#D84E55]" 
+                  />
+                  <input 
+                    placeholder="Mobile (10 digits)" 
+                    inputMode="numeric" 
+                    maxLength={10} 
+                    value={p.phone} 
+                    onChange={(e) => setP({ ...p, phone: e.target.value.replace(/\D/g, "") })} 
+                    className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white focus:border-[#D84E55]" 
+                  />
+                </div>
               </div>
 
-              <input 
-                placeholder="Full Passenger Name" 
-                value={p.name} 
-                onChange={(e) => setP({ ...p, name: e.target.value })} 
-                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none" 
-              />
+              {/* INDIVIDUAL PASSENGER DETAILS LIST */}
+              <div className="space-y-3">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  Passenger Information ({passengers.length || chosenSeats.length} Berth{(passengers.length || chosenSeats.length) > 1 ? "s" : ""})
+                </span>
 
-              <div className="grid grid-cols-2 gap-2">
-                <input 
-                  placeholder="Email Address" 
-                  value={p.email} 
-                  onChange={(e) => setP({ ...p, email: e.target.value })} 
-                  className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none" 
-                />
-                <input 
-                  placeholder="Mobile (10 digits)" 
-                  inputMode="numeric" 
-                  maxLength={10} 
-                  value={p.phone} 
-                  onChange={(e) => setP({ ...p, phone: e.target.value.replace(/\D/g, "") })} 
-                  className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none" 
-                />
+                {passengers.length > 0 ? (
+                  passengers.map((pas, idx) => (
+                    <div key={pas.seatId || idx} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
+                      <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                        <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5 text-[#D84E55]" /> Passenger {idx + 1}
+                        </span>
+                        <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[#D84E55]">
+                          Seat: {pas.seatNumber}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-[1.5fr_0.8fr] gap-2">
+                        <input 
+                          placeholder="Full Name" 
+                          value={pas.name} 
+                          onChange={(e) => onPassengerChange(idx, "name", e.target.value)} 
+                          className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-white focus:border-[#D84E55]" 
+                        />
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <input 
+                            placeholder="Age" 
+                            type="number" 
+                            min="1" 
+                            max="120"
+                            value={pas.age || ""} 
+                            onChange={(e) => onPassengerChange(idx, "age", e.target.value)} 
+                            className="border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-bold outline-none bg-white focus:border-[#D84E55]" 
+                          />
+                          <select 
+                            value={pas.gender} 
+                            onChange={(e) => onPassengerChange(idx, "gender", e.target.value)}
+                            className="border border-slate-300 rounded-xl px-2 py-2 text-xs font-bold outline-none bg-white focus:border-[#D84E55]"
+                          >
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  // Fallback agar single passenger state ho
+                  <div className="space-y-2">
+                    <input 
+                      placeholder="Full Passenger Name" 
+                      value={p.name} 
+                      onChange={(e) => setP({ ...p, name: e.target.value })} 
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none" 
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      {["Male", "Female"].map((g) => (
+                        <button 
+                          key={g} 
+                          type="button"
+                          onClick={() => setP({ ...p, gender: g })} 
+                          className={`py-2 rounded-xl border text-xs font-black transition cursor-pointer ${
+                            p.gender === g ? "text-white border-transparent" : "border-slate-300 text-slate-700"
+                          }`} 
+                          style={p.gender === g ? { background: primaryColor } : {}}
+                        >
+                          {g}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -248,8 +307,10 @@ export default function BookingDrawer({
 
                 <div className="grid grid-cols-2 gap-2 text-xs font-bold">
                   <div>
-                    <span className="text-[9px] text-slate-400 block">Passenger</span>
-                    <span className="text-slate-900">{p.name}</span>
+                    <span className="text-[9px] text-slate-400 block">Passenger(s)</span>
+                    <span className="text-slate-900">
+                      {passengers.length > 0 ? passengers.map(ps => ps.name).filter(Boolean).join(", ") : p.name}
+                    </span>
                   </div>
                   <div className="text-right">
                     <span className="text-[9px] text-slate-400 block">Seat Number(s)</span>

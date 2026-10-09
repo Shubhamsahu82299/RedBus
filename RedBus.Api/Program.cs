@@ -12,7 +12,7 @@ using RouteEntity = RedBus.Shared.Entities.Route;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Shared SQLite Context to postgresql
+// 1. Shared PostgreSQL Context
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
                        ?? Environment.GetEnvironmentVariable("POSTGRES_URL");
 
@@ -23,14 +23,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         options.UseNpgsql(connectionString);
     }
 });
-/* builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=../redbus.db")); */
 
-// 2. Register PDF Service inside API for instant on-demand fallback (BEFORE builder.Build())
+// 2. Register PDF Service inside API for instant on-demand fallback
 builder.Services.AddSingleton<TicketPdfService>();
 
 // 3. MassTransit Publisher Configuration
-// MassTransit Broker Configuration (CloudAMQP TLS & Custom VHost Compatible)
 var rabbitMqUrl = Environment.GetEnvironmentVariable("RABBITMQ_URL") 
     ?? builder.Configuration["RABBITMQ_URL"] 
     ?? "amqps://nznmdgce:IWQkbR3LSELVQWQhGP9u7I0vZi221da0@warthog.lmq.cloudamqp.com/nznmdgce";
@@ -63,7 +60,7 @@ builder.Services.AddMassTransit(x =>
     });
 });
 
-// Render startup timeout se bachane ke liye non-blocking start
+// Non-blocking start for Render
 builder.Services.AddOptions<MassTransitHostOptions>()
     .Configure(options =>
     {
@@ -71,17 +68,6 @@ builder.Services.AddOptions<MassTransitHostOptions>()
         options.StartTimeout = TimeSpan.FromSeconds(30);
         options.StopTimeout = TimeSpan.FromSeconds(30);
     });
-/* builder.Services.AddMassTransit(x =>
-{
-    x.UsingRabbitMq((context, cfg) =>
-    {
-        cfg.Host("localhost", "/", h =>
-        {
-            h.Username("guest");
-            h.Password("guest");
-        });
-    });
-}); */
 
 // 4. CORS Policy
 builder.Services.AddCors(options =>
@@ -158,7 +144,7 @@ app.MapGet("/api/schedules/{scheduleId:int}/seats", async (int scheduleId, AppDb
     return Results.Ok(result);
 });
 
-// 2. POST: 10-Minute Hold Request
+// 2. POST: 10-Minute Hold Request (Multi-Passenger Supported)
 app.MapPost("/api/bookings/hold", async (HoldSeatRequest request, AppDbContext db, IPublishEndpoint publishEndpoint) =>
 {
     var now = DateTime.UtcNow;
@@ -182,20 +168,28 @@ app.MapPost("/api/bookings/hold", async (HoldSeatRequest request, AppDbContext d
     if (isTaken)
         return Results.Conflict(new { message = "One or more seats were just booked. Please pick another seat." });
 
-    if (string.Equals(request.PassengerGender, "Male", StringComparison.OrdinalIgnoreCase))
+    // Validate female-only seats
+    foreach (var res in targetReservations)
     {
-        if (targetReservations.Any(s => s.GenderRestriction == "FemaleOnly"))
-            return Results.BadRequest(new { message = "Selected seat is reserved for female passengers only." });
+        var pasInfo = request.Passengers?.FirstOrDefault(p => p.SeatId == res.SeatId);
+        var gender = pasInfo?.Gender ?? request.PassengerGender;
+
+        if (res.GenderRestriction == "FemaleOnly" && string.Equals(gender, "Male", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new { message = $"Seat {res.Seat?.SeatNumber} is reserved for female passengers only." });
+        }
     }
 
     var bookingId = Guid.NewGuid();
     var expiry = now.AddMinutes(10);
 
+    // Update each reservation with its respective passenger details
     foreach (var res in targetReservations)
     {
+        var pasInfo = request.Passengers?.FirstOrDefault(p => p.SeatId == res.SeatId);
         res.Status = "Held";
         res.BookingId = bookingId;
-        res.PassengerGender = request.PassengerGender;
+        res.PassengerGender = pasInfo?.Gender ?? request.PassengerGender;
         res.HoldExpiresAt = expiry;
     }
 
@@ -209,16 +203,21 @@ app.MapPost("/api/bookings/hold", async (HoldSeatRequest request, AppDbContext d
 
     var seatLabels = string.Join(", ", targetReservations.Select(s => s.Seat!.SeatNumber));
 
+    // Consolidated Passenger names for reference
+    var primaryPassengerName = !string.IsNullOrWhiteSpace(request.PassengerName)
+        ? request.PassengerName
+        : (request.Passengers?.FirstOrDefault()?.Name ?? "Primary Passenger");
+
     var booking = new Booking
     {
         Id = bookingId,
         ScheduleId = request.ScheduleId,
         UserId = request.UserId,
-        PassengerName = string.IsNullOrWhiteSpace(request.PassengerName) ? "Primary Passenger" : request.PassengerName,
+        PassengerName = primaryPassengerName,
         PassengerEmail = request.PassengerEmail,
         PassengerPhone = request.PassengerPhone,
         PassengerGender = request.PassengerGender,
-        SeatNumbers = seatLabels,
+        SeatNumbers = string.IsNullOrWhiteSpace(request.SeatNumbers) ? seatLabels : request.SeatNumbers,
         BoardingPointName = request.BoardingPointName ?? "Telibandha Bus Stand",
         BoardingLandmark = request.BoardingLandmark ?? "Near Magneto Mall Bridge",
         BoardingTime = request.BoardingTime ?? "18:30",
@@ -251,6 +250,7 @@ app.MapPost("/api/bookings/hold", async (HoldSeatRequest request, AppDbContext d
                 PassengerPhone = request.PassengerPhone,
                 PassengerGender = request.PassengerGender,
                 TotalAmount = netPayable,
+                Passengers = request.Passengers ?? new List<PassengerDetailDto>(),
                 CreatedAt = now
             }, cts.Token);
         }
@@ -291,7 +291,6 @@ app.MapPost("/api/payments/confirm", async (ConfirmPaymentRequest request, AppDb
 
     await db.SaveChangesAsync();
 
-    // Non-blocking publish to trigger PDF generation worker
     _ = Task.Run(async () =>
     {
         try
@@ -313,7 +312,7 @@ app.MapPost("/api/payments/confirm", async (ConfirmPaymentRequest request, AppDb
     return Results.Ok(new { message = "Payment confirmed. Boarding pass issued." });
 });
 
-// 4. GET: Ticket PDF Download (Worker Cache First + Instant Fallback Generation)
+// 4. GET: Ticket PDF Download
 app.MapGet("/api/tickets/{bookingId}/download", async (
     string bookingId, 
     AppDbContext db, 
@@ -324,14 +323,12 @@ app.MapGet("/api/tickets/{bookingId}/download", async (
 
     var pdfPath = Path.Combine(ticketsDir, $"Ticket_{bookingId}.pdf");
 
-    // 1. Agar Worker pehle hi disk par PDF bana chuka hai, directly stream karo
     if (File.Exists(pdfPath))
     {
         var fileBytes = await File.ReadAllBytesAsync(pdfPath);
         return Results.File(fileBytes, "application/pdf", $"BoardingPass_{bookingId[..Math.Min(8, bookingId.Length)]}.pdf");
     }
 
-    // 2. Agar Worker offline/busy hai, API database se live data read karke instant PDF generate karegi
     if (!Guid.TryParse(bookingId, out var parsedGuid))
     {
         return Results.BadRequest(new { message = "Invalid booking ID format." });
@@ -359,10 +356,8 @@ app.MapGet("/api/tickets/{bookingId}/download", async (
         return Results.NotFound(new { message = "Schedule details not found." });
     }
 
-    // On-the-fly PDF compilation
     var generatedBytes = pdfService.GenerateBoardingPass(booking, schedule);
 
-    // Future requests ke liye disk par cache save karo
     _ = Task.Run(async () =>
     {
         try { await File.WriteAllBytesAsync(pdfPath, generatedBytes); } catch { }
@@ -370,10 +365,10 @@ app.MapGet("/api/tickets/{bookingId}/download", async (
 
     return Results.File(generatedBytes, "application/pdf", $"BoardingPass_{bookingId[..Math.Min(8, bookingId.Length)]}.pdf");
 });
+
 // ==========================================
 // ADMIN DASHBOARD REST APIS
 // ==========================================
-// 1. Bus Search Endpoint (/api/buses)
 app.MapGet("/api/buses", async (string? from, string? to, AppDbContext db) =>
 {
     var query = db.Schedules
@@ -398,7 +393,6 @@ app.MapGet("/api/buses", async (string? from, string? to, AppDbContext db) =>
     return Results.Ok(results);
 });
 
-// 2. Fallback Endpoint (/buses)
 app.MapGet("/buses", async (string? from, string? to, AppDbContext db) =>
 {
     var query = db.Schedules
@@ -422,7 +416,7 @@ app.MapGet("/buses", async (string? from, string? to, AppDbContext db) =>
     var results = await query.ToListAsync();
     return Results.Ok(results);
 });
-// 1. GET ALL BOOKINGS (Admin Live Monitoring)
+
 app.MapGet("/api/admin/bookings", async (AppDbContext db) =>
 {
     var bookings = await db.Bookings
@@ -455,10 +449,8 @@ app.MapGet("/api/admin/bookings", async (AppDbContext db) =>
     return Results.Ok(result);
 });
 
-// 2. CREATE NEW BUS, ROUTE, SCHEDULE & AUTO-GENERATE SEATS
 app.MapPost("/api/admin/schedules/create", async (CreateScheduleRequest req, AppDbContext db) =>
 {
-    // A. Check or Create Route
     var route = await db.Routes.FirstOrDefaultAsync(r => 
         r.SourceCity.ToLower() == req.SourceCity.ToLower() && 
         r.DestinationCity.ToLower() == req.DestinationCity.ToLower());
@@ -476,19 +468,17 @@ app.MapPost("/api/admin/schedules/create", async (CreateScheduleRequest req, App
         await db.SaveChangesAsync();
     }
 
-    // B. Create Bus Fleet Entity
-   var bus = new BusEntity
-{
-    OperatorName = req.OperatorName,
-    RegistrationNumber = req.RegistrationNumber,
-    BusType = req.LayoutCategory == "SLEEPER" ? "A/C Sleeper (2+1)" : "A/C Seater (2+2)",
-    TotalSeats = req.TotalSeats,
-    Rating = 4.8
-};
+    var bus = new BusEntity
+    {
+        OperatorName = req.OperatorName,
+        RegistrationNumber = req.RegistrationNumber,
+        BusType = req.LayoutCategory == "SLEEPER" ? "A/C Sleeper (2+1)" : "A/C Seater (2+2)",
+        TotalSeats = req.TotalSeats,
+        Rating = 4.8
+    };
     db.Buses.Add(bus);
     await db.SaveChangesAsync();
 
-    // C. Create Schedule
     var schedule = new Schedule
     {
         BusId = bus.Id,
@@ -501,7 +491,6 @@ app.MapPost("/api/admin/schedules/create", async (CreateScheduleRequest req, App
     db.Schedules.Add(schedule);
     await db.SaveChangesAsync();
 
-    // D. Auto-generate Seats Matrix based on Chassis Type
     var seats = new List<Seat>();
     var reservations = new List<SeatReservation>();
 
@@ -550,14 +539,13 @@ app.MapPost("/api/admin/schedules/create", async (CreateScheduleRequest req, App
     return Results.Ok(new { message = "Bus Schedule & Seats provisioned successfully!", scheduleId = schedule.Id });
 });
 
-// 3. ADMIN FACTORY RESET (1-Click Fresh State)
 app.MapPost("/api/admin/reset-database", async (AppDbContext db) =>
 {
     await db.Database.EnsureDeletedAsync();
     await db.Database.EnsureCreatedAsync();
     return Results.Ok(new { message = "Database wiped and reseeded with default fleets successfully." });
 });
-// POST: Cancel Ticket & Release Seats
+
 app.MapPost("/api/bookings/{bookingId}/cancel", async (string bookingId, AppDbContext db) =>
 {
     if (!Guid.TryParse(bookingId, out var parsedGuid))
@@ -570,10 +558,8 @@ app.MapPost("/api/bookings/{bookingId}/cancel", async (string bookingId, AppDbCo
     if (booking.Status == "Cancelled")
         return Results.BadRequest(new { message = "Ticket is already cancelled." });
 
-    // 1. Booking Status update
     booking.Status = "Cancelled";
 
-    // 2. Us booking ki saari seats release karke Available karna
     var reservedSeats = await db.SeatReservations
         .Where(r => r.BookingId == parsedGuid)
         .ToListAsync();
@@ -588,7 +574,6 @@ app.MapPost("/api/bookings/{bookingId}/cancel", async (string bookingId, AppDbCo
 
     await db.SaveChangesAsync();
 
-    // 3. Refund Calculation (Standard RedBus policy: 80% refund)
     var refundAmount = Math.Round(booking.TotalAmount * 0.80m, 2);
 
     return Results.Ok(new 
@@ -599,8 +584,7 @@ app.MapPost("/api/bookings/{bookingId}/cancel", async (string bookingId, AppDbCo
         seatsReleased = reservedSeats.Count
     });
 });
-// SEARCH BUSES BY ROUTE (LIVE FROM DB)
-// SEARCH BUSES BY ROUTE (LIVE FROM SQLITE)
+
 app.MapGet("/api/schedules/search", async (string? from, string? to, AppDbContext db) =>
 {
     var query = db.Schedules
@@ -616,7 +600,7 @@ app.MapGet("/api/schedules/search", async (string? from, string? to, AppDbContex
 
     var list = await query.ToListAsync();
 
-   var result = list.Select(s => new
+    var result = list.Select(s => new
     {
         scheduleId = s.Id,
         @operator = s.Bus != null ? s.Bus.OperatorName : "Super Express",
@@ -645,28 +629,24 @@ app.MapGet("/api/schedules/search", async (string? from, string? to, AppDbContex
     return Results.Ok(result);
 });
 
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
-}
 app.Run();
-// Admin Request DTO
+
+// ==========================================
+// DTO DEFINITIONS
+// ==========================================
 public record CreateScheduleRequest(
     string OperatorName,
     string RegistrationNumber,
-    string LayoutCategory, // "SLEEPER" or "SEATER"
+    string LayoutCategory,
     int TotalSeats,
     string SourceCity,
     string DestinationCity,
     int DistanceKm,
-    string DepartureTime, // "18:30"
-    string ArrivalTime,   // "08:30"
+    string DepartureTime,
+    string ArrivalTime,
     decimal BaseFare
 );
 
-
-// DTOs
 public record HoldSeatRequest(
     int ScheduleId,
     int UserId,
@@ -675,6 +655,8 @@ public record HoldSeatRequest(
     string PassengerEmail,
     string PassengerPhone,
     string PassengerGender,
+    string? SeatNumbers,
+    List<PassengerDetailDto>? Passengers,
     string? BoardingPointName,
     string? BoardingLandmark,
     string? BoardingTime,
@@ -682,5 +664,3 @@ public record HoldSeatRequest(
     string? DroppingLandmark,
     string? DroppingTime
 );
-
-public record ConfirmPaymentRequest(Guid BookingId, string? PaymentReference);
