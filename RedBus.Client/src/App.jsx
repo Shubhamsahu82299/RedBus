@@ -91,12 +91,11 @@ export default function App() {
   
   // Contact details
   const [p, setP] = useState({
-    name: "Shubham Kumar Sahu",
-    email: "shubham@example.com",
-    phone: "9876543210",
-    gender: "Male"
-  });
-
+  name: "",
+  email: "",
+  phone: "",
+  gender: "Male"
+});
   // Multiple Passengers state per selected seat
   const [passengers, setPassengers] = useState([]);
 
@@ -106,26 +105,26 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
 
-  // Keep passengers array in sync with selected seats
-  useEffect(() => {
-    setPassengers((prev) => {
-      return selected.map((seatId, idx) => {
-        const existing = prev.find((item) => item.seatId === seatId);
-        const seatObj = seats.find((s) => s.seatId === seatId);
-        const seatNum = seatObj ? seatObj.seatNumber : `Seat ${idx + 1}`;
+ 
+useEffect(() => {
+  setPassengers((prev) => {
+    return selected.map((seatId, idx) => {
+      const existing = prev.find((item) => item.seatId === seatId);
+      const seatObj = seats.find((s) => s.seatId === seatId);
+      const seatNum = seatObj ? seatObj.seatNumber : `Seat ${idx + 1}`;
 
-        return (
-          existing || {
-            seatId,
-            seatNumber: seatNum,
-            name: idx === 0 ? p.name : "",
-            gender: "Male",
-            age: 24,
-          }
-        );
-      });
+      return (
+        existing || {
+          seatId,
+          seatNumber: seatNum,
+          name: "",
+          gender: "Male",
+          age: "",
+        }
+      );
     });
-  }, [selected, seats]);
+  });
+}, [selected, seats]);
 
   const handlePassengerChange = (index, field, value) => {
     setPassengers((prev) => {
